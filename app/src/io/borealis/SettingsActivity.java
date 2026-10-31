@@ -82,6 +82,105 @@ public class SettingsActivity extends Activity {
         }, 400);
     }
 
+    // MARK: - Custom wallpaper
+
+    private static final int REQ_WALLPAPER = 4711;
+
+    /** "Custom wallpaper": choose a picture from a file, from the app's own folder, or remove the one set. */
+    void pickCustomWallpaper() {
+        final List<CharSequence> options = new ArrayList<>();
+        options.add(Ui.tr("Escolher um arquivo de imagem", "Choose a picture file", "Elegir un archivo de imagen"));
+        options.add(Ui.tr("Usar uma imagem da pasta do app", "Use a picture from the app's folder", "Usar una imagen de la carpeta de la app"));
+        final boolean remove = Prefs.hasCustom();
+        if (remove) options.add(Ui.tr("Remover meu fundo", "Remove my wallpaper", "Quitar mi fondo"));
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(Ui.tr("Fundo personalizado", "Custom wallpaper", "Fondo personalizado"))
+                .setItems(options.toArray(new CharSequence[0]), (d, which) -> {
+                    if (which == 0) openSystemPicker();
+                    else if (which == 1) useWallpaperFolder();
+                    else removeWallpaper();
+                })
+                .setNegativeButton(Ui.tr("Cancelar", "Cancel", "Cancelar"), null)
+                .show();
+    }
+
+    private void openSystemPicker() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
+        try {
+            startActivityForResult(pick, REQ_WALLPAPER);
+        } catch (RuntimeException e) {   // this TV has no file chooser: the app's own folder is the way
+            useWallpaperFolder();
+        }
+    }
+
+    /** The newest picture in the app's own folder (Android/data/io.borealis/files/Pictures: adb push can write there, no permission needed). */
+    private void useWallpaperFolder() {
+        java.io.File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+        java.io.File best = null;
+        if (dir != null) {
+            dir.mkdirs();
+            java.io.File[] files = dir.listFiles();
+            if (files != null) {
+                for (java.io.File f : files) {
+                    String name = f.getName().toLowerCase(Locale.ROOT);
+                    boolean picture = name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp");
+                    if (f.isFile() && picture && (best == null || f.lastModified() > best.lastModified())) best = f;
+                }
+            }
+        }
+        if (best != null) {
+            importWallpaper(null, best);
+            return;
+        }
+        String path = dir == null ? "" : dir.getAbsolutePath();
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(Ui.tr("Nenhuma imagem na pasta", "No picture in the folder", "No hay ninguna imagen en la carpeta"))
+                .setMessage(Ui.tr("Copie uma imagem (JPG, PNG ou WEBP) para esta pasta e escolha esta opção de novo:\n\n",
+                        "Copy a picture (JPG, PNG or WEBP) into this folder and choose this option again:\n\n",
+                        "Copia una imagen (JPG, PNG o WEBP) a esta carpeta y vuelve a elegir esta opción:\n\n")
+                        + path + "\n\nadb push foto.jpg " + path + "/")
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    private void removeWallpaper() {
+        Prefs.removeCustom();
+        HomeData.get(this).settingsChanged();
+        if (view != null) view.invalidate();
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_WALLPAPER || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        importWallpaper(data.getData(), null);
+    }
+
+    /** Reads the picture (from the chooser's address, or from a file) on a background thread, then makes it the wallpaper. */
+    private void importWallpaper(final android.net.Uri uri, final java.io.File file) {
+        final Context app = getApplicationContext();
+        android.widget.Toast.makeText(this, Ui.tr("Carregando a imagem…", "Loading the picture…", "Cargando la imagen…"), android.widget.Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            boolean saved = false;
+            try (java.io.InputStream in = uri != null ? getContentResolver().openInputStream(uri) : new java.io.FileInputStream(file)) {
+                saved = in != null && Prefs.saveCustom(app, in);
+            } catch (java.io.IOException | RuntimeException e) {
+                AppLog.w("custom wallpaper: " + e);
+            }
+            final boolean ok = saved;
+            runOnUiThread(() -> {
+                if (ok) {
+                    Prefs.setWallpaper(Prefs.WALLPAPER_FILES.length);   // the person's picture comes right after the app's five
+                    HomeData.get(app).settingsChanged();
+                    if (view != null) view.invalidate();
+                }
+                android.widget.Toast.makeText(this, ok
+                        ? Ui.tr("Fundo atualizado.", "Wallpaper updated.", "Fondo actualizado.")
+                        : Ui.tr("Não consegui usar essa imagem.", "I couldn't use that picture.", "No pude usar esa imagen."),
+                        android.widget.Toast.LENGTH_LONG).show();
+            });
+        }, "borealis-wallpaper").start();
+    }
+
     /** Leaving the settings (Back) fades out into the home screen instead of cutting. */
     @Override public void finish() {
         super.finish();
@@ -666,16 +765,18 @@ public class SettingsActivity extends Activity {
         private void drawBackground(Canvas c) {
             c.drawColor(Brand.INK);
             final int wallpaper = Prefs.wallpaper();
-            if (wallpaper != bgIdx && wallpaper != bgLoading) {
+            final long stamp = Prefs.wallpaperStamp();
+            if ((wallpaper != bgIdx || stamp != bgStamp) && wallpaper != bgLoading) {
                 bgLoading = wallpaper;
                 new Thread(() -> {
-                    Bitmap pic = decodeWallpaper(Prefs.WALLPAPER_FILES[wallpaper], 4, 0);
+                    Bitmap pic = decodeWallpaper(Prefs.wallpaperFiles()[wallpaper], 4, 0);
                     final Bitmap soft = pic == null ? null : softBackdrop(pic);
                     if (pic != null) pic.recycle();
                     handler.post(() -> {
                         bgPrev = bgSoft;
                         bgSoft = soft;
                         bgIdx = wallpaper;
+                        bgStamp = stamp;
                         bgLoading = -1;
                         bgAt = SystemClock.uptimeMillis();
                         invalidate();
@@ -697,6 +798,7 @@ public class SettingsActivity extends Activity {
 
         private Bitmap bgSoft, bgPrev;
         private int bgIdx = -1, bgLoading = -1;
+        private long bgStamp;
         private long bgAt;
         private final Paint bgPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
 
@@ -1126,7 +1228,7 @@ public class SettingsActivity extends Activity {
         /** The rows of the open group: ids of the old Home Settings rows, plus the ID_* ones. */
         private int[] groupIds() {
             switch (group) {
-                case 1: return sortedByName(WALLPAPER_ROW, ID_SAVER, ID_SPLASH, ID_SOUND);
+                case 1: return sortedByName(WALLPAPER_ROW, ID_CUSTOM_WP, ID_SAVER, ID_SPLASH, ID_SOUND);
                 case 2: {
                     int[] top = sortedByName(5, 6, ID_SHELF, ID_HIDDEN, 7, 8);
                     int coins = Math.max(0, settingLabels().length - COIN_ROWS);
@@ -1142,7 +1244,7 @@ public class SettingsActivity extends Activity {
                     return ids;
                 }
                 case 3: return sortedByName(0, 1, 3, 4, ID_REMOTE, ID_WELCOME);
-                default: return sortedByName(ID_LAUNCHER, ID_TV, ID_UPDATE, ID_UPDATE_AUTO);
+                default: return sortedByName(ID_LAUNCHER, ID_TV, ID_REBOOT, ID_UPDATE, ID_UPDATE_AUTO);
             }
         }
 
@@ -1164,6 +1266,8 @@ public class SettingsActivity extends Activity {
                 case ID_SPLASH: return Ui.tr("Logo do launcher ao ligar a TV", "Launcher logo when the TV turns on", "Logo del launcher al encender la TV");
                 case ID_SOUND: return Ui.tr("Som de abertura", "Startup sound", "Sonido de inicio");
                 case ID_TV: return Ui.tr("Ajustes da TV", "TV Settings", "Ajustes de la TV");
+                case ID_REBOOT: return Ui.tr("Reiniciar a TV", "Restart the TV", "Reiniciar TV");
+                case ID_CUSTOM_WP: return Ui.tr("Fundo personalizado", "Custom wallpaper", "Fondo personalizado");
                 case ID_REMOTE: return Ui.tr("Botão de ajustes do controle", "Remote's settings button", "Botón de ajustes del control");
                 case ID_WELCOME: return Ui.tr("Repetir as boas-vindas", "Replay the welcome", "Repetir bienvenida");
                 case ID_UPDATE: return Ui.tr("Atualizações", "Updates", "Actualizaciones");
@@ -1181,7 +1285,8 @@ public class SettingsActivity extends Activity {
                 case ID_SPLASH: return onOff(Prefs.splash());
                 case ID_SOUND: return onOff(Prefs.startupSound());
                 case ID_REMOTE: return onOff(remoteButtonOn());
-                case ID_SHELF: case ID_TV: case ID_WELCOME: return "";
+                case ID_SHELF: case ID_TV: case ID_WELCOME: case ID_REBOOT: return "";
+                case ID_CUSTOM_WP: return Prefs.hasCustom() ? Ui.tr("Definido", "Set", "Cargado") : "";
                 case ID_HIDDEN: { int n = Prefs.hiddenApps().size(); return n == 0 ? "" : String.valueOf(n); }
                 case ID_UPDATE: {
                     String newer = Update.newer(getContext());
@@ -1464,7 +1569,7 @@ public class SettingsActivity extends Activity {
         /** Home Settings: language, temperature, theme, weather, quotes, then one row per coin. */
         private static final int COIN_ROWS = 10, WALLPAPER_ROW = 9;
         /** Rows of a group that are not in the old Home Settings list: screensaver, shelf, launcher, TV settings. */
-        private static final int ID_SAVER = 100, ID_SHELF = 101, ID_LAUNCHER = 102, ID_TV = 103, ID_SPLASH = 104, ID_WELCOME = 105, ID_SOUND = 106, ID_REMOTE = 107, ID_UPDATE = 108, ID_UPDATE_AUTO = 109, ID_HIDDEN = 110;
+        private static final int ID_SAVER = 100, ID_SHELF = 101, ID_LAUNCHER = 102, ID_TV = 103, ID_SPLASH = 104, ID_WELCOME = 105, ID_SOUND = 106, ID_REMOTE = 107, ID_UPDATE = 108, ID_UPDATE_AUTO = 109, ID_HIDDEN = 110, ID_REBOOT = 111, ID_CUSTOM_WP = 112;
         private static final float CARD_H = 130, CARD_GAP = 14;
 
         private boolean dollar() {
@@ -1515,7 +1620,8 @@ public class SettingsActivity extends Activity {
         }
 
         private static String wallpaperName(int i) {
-            return Prefs.WALLPAPER_NAMES[i];
+            String[] names = Prefs.wallpaperNames();
+            return names[Math.max(0, Math.min(i, names.length - 1))];
         }
 
         private static String onOff(boolean on) {
@@ -1638,6 +1744,19 @@ public class SettingsActivity extends Activity {
                     break;
             }
             HomeData.get(getContext()).settingsChanged();
+        }
+
+        /** Asks "Restart the TV?" and, if the person accepts, restarts it through the TV's own adb (like the other system switches). */
+        private void confirmReboot() {
+            final Context ctx = getContext();
+            new android.app.AlertDialog.Builder(ctx)
+                    .setTitle(Ui.tr("Reiniciar a TV", "Restart the TV", "Reiniciar TV"))
+                    .setMessage(Ui.tr("A TV vai reiniciar agora. Deseja continuar?",
+                            "The TV will restart now. Do you want to continue?",
+                            "El TV se reiniciará ahora. ¿Quieres continuar?"))
+                    .setPositiveButton(Ui.tr("Reiniciar", "Restart", "Reiniciar"), (d, w) -> HomeMode.requestReboot(ctx))
+                    .setNegativeButton(Ui.tr("Cancelar", "Cancel", "Cancelar"), null)
+                    .show();
         }
 
         /**
@@ -2014,14 +2133,15 @@ public class SettingsActivity extends Activity {
         private int wpSaverCurrent;
         private Paint svClock, svDate, svWeather, svLabel, svTitle, svSub, svBar, svTime;
 
-        private String[] wpFiles() { return wpSaver ? Prefs.SAVER_POSTERS : Prefs.WALLPAPER_FILES; }
-        private String[] wpNames() { return wpSaver ? Prefs.SAVER_NAMES : Prefs.WALLPAPER_NAMES; }
+        private String[] wpFiles() { return wpSaver ? Prefs.SAVER_POSTERS : Prefs.wallpaperFiles(); }
+        private String[] wpNames() { return wpSaver ? Prefs.SAVER_NAMES : Prefs.wallpaperNames(); }
         private int wpCurrent() { return wpSaver ? wpSaverCurrent : Prefs.wallpaper(); }
                 private final android.graphics.Path wpClip = new android.graphics.Path();
 
         private boolean wpFromMain;
         // Remembered between visits (small), so coming back is immediate.
         private static Bitmap wpFullCache;
+        private static long wpCustomStamp = -1;   // which version of the person's picture the remembered pictures below show
         private static int wpFullCacheIdx = -1;
         private static boolean wpFullCacheSaver;
         private static final Bitmap[][] CACHE_THUMB = new Bitmap[2][], CACHE_SMALL = new Bitmap[2][], CACHE_BLUR = new Bitmap[2][];
@@ -2073,6 +2193,12 @@ public class SettingsActivity extends Activity {
         }
 
         private void openWallpapers(boolean saver, boolean fromMain) {
+            long stampNow = Prefs.hasCustom() ? Prefs.customVersion() : 0;
+            if (stampNow != wpCustomStamp) {   // the person's picture was added, changed or removed: forget what was remembered
+                wpCustomStamp = stampNow;
+                wpFullCache = null;
+                CACHE_THUMB[0] = CACHE_SMALL[0] = CACHE_BLUR[0] = null;
+            }
             dropSnapshot();
             wpSnap = takeSnapshot();
             wpSaver = saver;
@@ -2183,7 +2309,7 @@ public class SettingsActivity extends Activity {
         }
 
         private Bitmap decodeWallpaper(String file, int sample, int targetWidth) {
-            try (java.io.InputStream in = getContext().getAssets().open(file)) {
+            try (java.io.InputStream in = Prefs.openWallpaper(getContext(), file)) {
                 BitmapFactory.Options o = new BitmapFactory.Options();
                 o.inSampleSize = sample;
                 if (targetWidth > 0 && targetWidth < 1920) {
@@ -3461,6 +3587,10 @@ public class SettingsActivity extends Activity {
                     activity.goHomeSoftly();
                 } else if (id == ID_UPDATE) {
                     checkUpdateNow();
+                } else if (id == ID_REBOOT) {
+                    confirmReboot();
+                } else if (id == ID_CUSTOM_WP) {
+                    activity.pickCustomWallpaper();
                 } else if (id == ID_TV) {
                     activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 } else if (id == WALLPAPER_ROW) {

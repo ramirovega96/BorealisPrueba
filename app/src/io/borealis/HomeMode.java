@@ -143,6 +143,11 @@ final class HomeMode {
         return state(c).optBoolean("remoteWanted");
     }
 
+    /** Settings asks (from :home) to restart the TV (after the person confirmed). */
+    static void requestReboot(Context c) {
+        ModeJob.schedule(c, ModeJob.REBOOT, null, 0);
+    }
+
     /** Settings asks (from :home) for the screensaver to start after this many minutes (5, 10, 15 or 30). */
     static void requestSaverTime(Context c, int minutes) {
         ModeJob.schedule(c, ModeJob.SAVER_TIME, String.valueOf(minutes), 1_200);   // waits a moment: several presses become one change
@@ -161,6 +166,16 @@ final class HomeMode {
             if (sleep > 0 && sleep <= ms) adb.shell("settings put secure sleep_timeout " + (ms + 30 * 60_000L));
         } catch (IOException e) {
             AppLog.w("screensaver time: " + e.getMessage());
+        }
+    }
+
+    /** Restarts the TV through its own adb (the same one used for the other switches). Only this fixed command is sent. */
+    static void rebootNow(Context app) {
+        try (Adb adb = Adb.connect(app, 10_000, null)) {
+            adb.shell("reboot");
+        } catch (IOException e) {
+            // The connection drops when the TV goes down: that is the normal end, not an error.
+            AppLog.w("reboot: " + e.getMessage());
         }
     }
 

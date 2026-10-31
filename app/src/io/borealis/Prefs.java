@@ -109,7 +109,146 @@ final class Prefs {
     static int wallpaper() {
         if (app == null) return 0;
         int v = sp().getInt("wallpaper", 0);
-        return v >= 0 && v < WALLPAPER_FILES.length ? v : 0;
+        return v >= 0 && v < wallpaperFiles().length ? v : 0;
+    }
+
+    // MARK: - The person's own wallpaper (one picture, kept in the app's private folder)
+
+    /** In the list of wallpapers, the name that stands for the person's own picture (it is not an asset). */
+    static final String CUSTOM = "custom";
+    private static final String CUSTOM_NAME = "custom_wallpaper.jpg";
+    private static long customCheckedAt;
+    private static boolean customHas;
+    private static long customStampValue;
+
+    private static java.io.File customFile() {
+        return new java.io.File(app.getFilesDir(), CUSTOM_NAME);
+    }
+
+    /** Looks at the file at most once a second (the home screen asks every frame). */
+    private static synchronized void checkCustom() {
+        if (app == null) return;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (customCheckedAt != 0 && now - customCheckedAt < 1000) return;
+        customCheckedAt = now;
+        java.io.File f = customFile();
+        customHas = f.isFile() && f.length() > 0;
+        customStampValue = customHas ? f.lastModified() : 0;
+    }
+
+    static boolean hasCustom() {
+        checkCustom();
+        return customHas;
+    }
+
+    /** Changes whenever the person's picture is added or replaced (0 if there is none), whether or not it is the one in use. */
+    static long customVersion() {
+        checkCustom();
+        return customHas ? customStampValue : 0;
+    }
+
+    /** Changes whenever the person's picture is replaced; 0 while another wallpaper is the one in use. Screens compare it to reload. */
+    static long wallpaperStamp() {
+        if (app == null || !hasCustom()) return 0;
+        return sp().getInt("wallpaper", 0) == WALLPAPER_FILES.length ? customStampValue : 0;
+    }
+
+    /** The wallpapers to choose from: the five of the app, plus "My wallpaper" once the person has set one. */
+    static String[] wallpaperFiles() {
+        return hasCustom() ? concat(WALLPAPER_FILES, new String[] {CUSTOM}) : WALLPAPER_FILES;
+    }
+
+    static String[] wallpaperNames() {
+        return hasCustom() ? concat(WALLPAPER_NAMES, new String[] {Ui.tr("Meu fundo", "My wallpaper", "Mi fondo")}) : WALLPAPER_NAMES;
+    }
+
+    /** Opens a wallpaper by its name in wallpaperFiles(): an asset, or the person's own picture. */
+    static java.io.InputStream openWallpaper(Context c, String file) throws java.io.IOException {
+        if (CUSTOM.equals(file)) return new java.io.FileInputStream(customFile());
+        return c.getAssets().open(file);
+    }
+
+    /**
+     * Keeps the picture read from `in` as the person's wallpaper: turned upright (camera EXIF), cut to 16:9 from the center
+     * and at most 1920x1080, like the wallpapers of the app. Returns false if it is not a picture or is too big.
+     */
+    static boolean saveCustom(Context c, java.io.InputStream in) {
+        if (app == null) return false;
+        android.graphics.Bitmap src = null, upright = null, out = null;
+        try {
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[16 * 1024];
+            long total = 0;
+            int n;
+            while ((n = in.read(chunk)) > 0) {
+                total += n;
+                if (total > 48L * 1024 * 1024) return false;
+                buf.write(chunk, 0, n);
+            }
+            byte[] data = buf.toByteArray();
+            android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false;
+            int sample = 1;
+            while (bounds.outWidth / (sample * 2) >= 1920 && bounds.outHeight / (sample * 2) >= 1920 * 9 / 16) sample *= 2;
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inSampleSize = sample;
+            src = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
+            if (src == null) return false;
+            int degrees = 0;
+            try {
+                int orientation = new android.media.ExifInterface(new java.io.ByteArrayInputStream(data))
+                        .getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL);
+                if (orientation == android.media.ExifInterface.ORIENTATION_ROTATE_90) degrees = 90;
+                else if (orientation == android.media.ExifInterface.ORIENTATION_ROTATE_180) degrees = 180;
+                else if (orientation == android.media.ExifInterface.ORIENTATION_ROTATE_270) degrees = 270;
+            } catch (java.io.IOException | RuntimeException ignored) {
+            }
+            upright = src;
+            if (degrees != 0) {
+                android.graphics.Matrix m = new android.graphics.Matrix();
+                m.postRotate(degrees);
+                upright = android.graphics.Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), m, true);
+            }
+            int sw = upright.getWidth(), sh = upright.getHeight();
+            int cw = sw, ch = Math.round(sw * 9f / 16f);
+            if (ch > sh) {
+                ch = sh;
+                cw = Math.round(sh * 16f / 9f);
+            }
+            int x = (sw - cw) / 2, y = (sh - ch) / 2;
+            int ow = Math.min(1920, cw), oh = Math.round(ow * 9f / 16f);
+            out = android.graphics.Bitmap.createBitmap(ow, oh, android.graphics.Bitmap.Config.ARGB_8888);
+            new android.graphics.Canvas(out).drawBitmap(upright, new android.graphics.Rect(x, y, x + cw, y + ch),
+                    new android.graphics.Rect(0, 0, ow, oh), new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG));
+            java.io.File dest = customFile(), tmp = new java.io.File(dest.getPath() + ".tmp");
+            try (java.io.FileOutputStream fo = new java.io.FileOutputStream(tmp)) {
+                if (!out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, fo)) return false;
+                fo.getFD().sync();
+            }
+            if (!tmp.renameTo(dest)) return false;
+            synchronized (Prefs.class) { customCheckedAt = 0; }
+            version++;
+            return true;
+        } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
+            AppLog.w("custom wallpaper: " + e);
+            return false;
+        } finally {
+            if (out != null) out.recycle();
+            if (upright != null && upright != src) upright.recycle();
+            if (src != null) src.recycle();
+        }
+    }
+
+    /** Deletes the person's picture; if it was the one in use, the first wallpaper of the app comes back. */
+    static void removeCustom() {
+        if (app == null) return;
+        boolean inUse = sp().getInt("wallpaper", 0) == WALLPAPER_FILES.length;
+        if (inUse) sp().edit().putInt("wallpaper", 0).apply();
+        customFile().delete();
+        synchronized (Prefs.class) { customCheckedAt = 0; }
+        version++;
     }
 
     static void setWallpaper(int v) {

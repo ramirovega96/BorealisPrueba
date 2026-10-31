@@ -28,6 +28,7 @@ final class ShelfDemo {
 
     private static Bitmap wall;
     private static int wallIndex = -1;
+    private static long wallStamp;
 
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG), image = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final RectF r = new RectF(), m = new RectF(), screen = new RectF();
@@ -43,9 +44,11 @@ final class ShelfDemo {
     /** The wallpaper in use (the same as the welcome's backdrop), loaded once and small. */
     private static void loadWall(Context c) {
         int idx = Prefs.wallpaper();
-        if (idx == wallIndex) return;
+        long stamp = Prefs.wallpaperStamp();
+        if (idx == wallIndex && stamp == wallStamp) return;
         wallIndex = idx;
-        try (InputStream in = c.getAssets().open(Prefs.WALLPAPER_FILES[idx])) {
+        wallStamp = stamp;
+        try (InputStream in = Prefs.openWallpaper(c, Prefs.wallpaperFiles()[idx])) {
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inSampleSize = 4;
             wall = BitmapFactory.decodeStream(in, null, o);

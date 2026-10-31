@@ -385,13 +385,13 @@ final class HomeApps {
 
     private static synchronized Bitmap brandTile(Context c) {
         int wp = Prefs.wallpaper();
-        String key = "borealis-settings:" + wp;
+        String key = "borealis-settings:" + wp + ":" + Prefs.wallpaperStamp();
         if (TILES.containsKey(key)) return TILES.get(key);
         Bitmap b = Bitmap.createBitmap(TILE_W, TILE_H, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(b);
         canvas.drawColor(Brand.INK);
         Bitmap soft = null;
-        try (InputStream in = c.getAssets().open(Prefs.WALLPAPER_FILES[wp])) {
+        try (InputStream in = Prefs.openWallpaper(c, Prefs.wallpaperFiles()[wp])) {
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inSampleSize = 4;
             Bitmap pic = BitmapFactory.decodeStream(in, null, o);

@@ -133,7 +133,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     });
     private final RectF a11yRect = new RectF();
     private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer, menuLayer, infoLayer, returnLayer;
-    private int zone = Z_TOP;   // starts on the selected tab, so the first focus is obvious
+    private int zone = Z_TOP;   // until the apps are loaded; then the focus starts on the first app (see setShelf)
+    private boolean startedOnShelf;   // the first focus already went to the apps
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
     private static final long NIGHT_MS = 2000;
@@ -172,6 +173,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Bitmap wave;          // the static wave background (assets/wave.jpg)
     private boolean waveTried;
     private int waveIdx = -1;     // which wallpaper `wave` holds (Prefs.wallpaper())
+    private long waveStamp;       // and, for the person's own picture, which version of it
     private Shader lightGradient;
 
     // Shelf
@@ -562,7 +564,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Starting state (Home pressed while the home screen is showing): first app focused, drawer and sheet closed. */
     void reset(boolean animated) {
         if (animated) homePressedAt = SystemClock.uptimeMillis();   // the Home button: the window is still arriving when we resume (see startReturn)
-        zone = !tabsVisible() && !cards.isEmpty() ? Z_CARDS : Z_TOP;
+        zone = !shelf.isEmpty() ? Z_SHELF : !tabsVisible() && !cards.isEmpty() ? Z_CARDS : Z_TOP;   // the apps first
         shelfIndex = 0;
         sheetOpen = false;
         drawerOpen = false;
@@ -1249,6 +1251,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 tileRects[i] = new RectF();
             }
             shelfIndex = Math.min(shelfIndex, Math.max(0, list.size() - 1));
+            if (!startedOnShelf && !list.isEmpty()) {   // the first time the apps are known: the focus starts on them, not on the tabs or the suggestions
+                startedOnShelf = true;
+                if (zone == Z_TOP || zone == Z_CARDS) {
+                    zone = Z_SHELF;
+                    shelfIndex = 0;
+                }
+            }
             retarget(true);
             layoutShelf();
         }
@@ -3374,14 +3383,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
         android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
         int wallpaper = Prefs.wallpaper();
-        if (wallpaper != waveIdx) {   // another wallpaper picked in Settings
+        long stamp = Prefs.wallpaperStamp();
+        if (wallpaper != waveIdx || stamp != waveStamp) {   // another wallpaper picked in Settings (or the person's own picture replaced)
             waveIdx = wallpaper;
+            waveStamp = stamp;
             wave = null;
             waveTried = false;
         }
         if (wave == null && !waveTried) {
             waveTried = true;
-            try (java.io.InputStream in = getContext().getAssets().open(Prefs.WALLPAPER_FILES[wallpaper])) {
+            try (java.io.InputStream in = Prefs.openWallpaper(getContext(), Prefs.wallpaperFiles()[wallpaper])) {
                 // Decoded at the screen's size (the file is 1920 wide): a 720p TV needs less than half the memory.
                 android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
                 if (w > 0 && w < 1920) {
