@@ -61,6 +61,8 @@ final class HomeApps {
     static final int HIDDEN_CARD = 40;
     /** The bell in the corner buttons: a new version is available. */
     static final int UPDATE = 41;
+    /** The power icon in the corner buttons: restarts the TV (after a confirmation). */
+    static final int REBOOT = 42;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 

@@ -149,12 +149,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // At the top: tabs (0 to 2) and icon-only buttons (3 to 5); the three cards
     private int tab, topIndex, cardIndex;
     private List<Recs.Pick> cards = new ArrayList<>();
-    private final Spring[] topFocus = new Spring[8];
-    private final RectF[] topRects = new RectF[8];
+    private final Spring[] topFocus = new Spring[10];   // 3 tabs + up to 7 corner buttons
+    private final RectF[] topRects = new RectF[10];
     // HDMI menu
     private final Spring menu = new Spring(0.3f, 0.9f, 0);
     /** Each corner button blinks with the gradient fill when it is clicked. */
-    private final Spring[] btnFlash = {new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0)};
+    private final Spring[] btnFlash = {new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0), new Spring(0.4f, 1f, 0)};
     private final List<MRow> menuRows = new ArrayList<>();
     private final RectF menuRow = new RectF();
     private boolean menuOpen, menuDirty;
@@ -416,7 +416,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         drawerLayer.setVisibility(INVISIBLE);
         menuLayer.setVisibility(INVISIBLE);
         returnLayer.setVisibility(INVISIBLE);
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < topFocus.length; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
         }
@@ -459,6 +459,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** The bell was pressed: say what is new and offer to install it. */
+    /** The power icon: "Restart the TV?" and, if accepted, the restart goes through the TV's own adb (HomeMode.rebootNow). */
+    private void askReboot() {
+        if (!(activity instanceof HomeActivity)) return;
+        final Context c = getContext();
+        ((HomeActivity) activity).showNotice(false,
+                Ui.tr("Reiniciar a TV?", "Restart the TV?", "¿Reiniciar el TV?"),
+                Ui.tr("A TV vai desligar e ligar de novo agora.", "The TV will shut down and start again now.",
+                        "El TV se apagará y volverá a encenderse ahora."),
+                Ui.tr("Reiniciar", "Restart", "Reiniciar"), () -> HomeMode.requestReboot(c),
+                Ui.tr("Cancelar", "Cancel", "Cancelar"), null);
+    }
+
     private void askUpdate() {
         final String version = Update.newer(getContext());
         if (version.isEmpty() || !(activity instanceof HomeActivity)) return;
@@ -595,6 +607,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!newVersion.isEmpty()) {   // a new version: the bell, first at the left
             lightButtons.add(HomeApps.action(HomeApps.UPDATE, "update", Ui.tr("Atualizar para ", "Update to ", "Actualizar a ") + newVersion, "bell"));
         }
+        lightButtons.add(HomeApps.action(HomeApps.REBOOT, "reboot", Ui.tr("Reiniciar a TV", "Restart the TV", "Reiniciar TV"), "power"));   // next to Wi-Fi
         lightButtons.add(HomeApps.action(HomeApps.WIFI, "wifi", "Wi-Fi", "wifi"));
         lightButtons.add(HomeApps.action(HomeApps.BLUETOOTH, "bluetooth", "Bluetooth", "bluetooth"));
         lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entrada de vídeo", "Video input", "Entrada de video"), "hdmi"));
@@ -1346,7 +1359,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Paint text = lQuote;
         // The corner buttons' names appear in this row: the quotes fade out while one of them has focus.
         float fade = 1;
-        for (int i = 3; i < 8; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
+        for (int i = 3; i < topFocus.length; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
         if (fade <= 0.01f) return;
         int textColor = text.getColor();
         text.setColor(Ui.alpha(textColor, fade));
@@ -2868,6 +2881,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (it.kind == HomeApps.UPDATE) {   // the bell
             askUpdate();
+            return;
+        }
+        if (it.kind == HomeApps.REBOOT) {   // the power icon
+            askReboot();
             return;
         }
         if (!sheetOpen && zone == Z_TOP && (it.kind == HomeApps.INPUTS || it.kind == HomeApps.WIFI || it.kind == HomeApps.BLUETOOTH || it.kind == HomeApps.SETTINGS)) {   // only the corner buttons open menus
