@@ -17,6 +17,22 @@ jobs:
           SDKM="$(command -v sdkmanager || ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-34" "build-tools;34.0.0"
+      - name: Write config.properties (TMDB key from the repository secret TMDB_KEY)
+        env:
+          TMDB_KEY: ${{ secrets.TMDB_KEY }}
+          LATITUDE: ${{ vars.LATITUDE }}
+          LONGITUDE: ${{ vars.LONGITUDE }}
+          CITY: ${{ vars.CITY }}
+        run: |
+          cp config.example.properties config.properties
+          sed -i "s|^tmdb_key=.*|tmdb_key=${TMDB_KEY}|" config.properties
+          sed -i "s|^tmdb_region=.*|tmdb_region=AR|" config.properties
+          sed -i "s|^language=.*|language=es|" config.properties
+          if [ -n "$LATITUDE" ] && [ -n "$LONGITUDE" ]; then
+            sed -i "s|^latitude=.*|latitude=${LATITUDE}|" config.properties
+            sed -i "s|^longitude=.*|longitude=${LONGITUDE}|" config.properties
+          fi
+          if [ -n "$CITY" ]; then sed -i "s|^city=.*|city=${CITY}|" config.properties; fi
       - name: Build
         run: bash build.sh
       - uses: actions/upload-artifact@v4
