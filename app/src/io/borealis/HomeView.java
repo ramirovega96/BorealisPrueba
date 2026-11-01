@@ -238,7 +238,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring[] phFocus = new Spring[COLUMNS];
     { for (int i = 0; i < COLUMNS; i++) phFocus[i] = new Spring(0.3f, 0.82f, 0); }
     private final Paint dashPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private int phCount() { return pinnedCount > 0 && pinnedCount < COLUMNS ? COLUMNS - pinnedCount : 0; }
+    private int phCount() { return pinnedCount > 0 ? (pinnedCount < COLUMNS ? COLUMNS - pinnedCount : 1) : 0; }   // empty slots up to a full row; past it, one "+" at the end
+    private final Spring shelfScroll = new Spring(0.32f, 1f, 0);   // the favorites row scrolls sideways when it holds more than COLUMNS: first visible column
+    private int shelfFirst;   // its target, whole columns
     private int phGrid = -1;   // with the "All Apps" panel open: which empty slot of its first row has the focus (-1 = none)
     /** The empty slot that has the focus now (0 = the first one), on the shelf or in the open panel; -1 if none. */
     private int phSlot() {
@@ -812,7 +814,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (topMoving) status.invalidate();
         heroMoving |= topMoving | cardsMoving | growMoving | cardScrolling;
         boolean drawerItemsMoving = step(drawerFocus, dt);
-        boolean gridMoving = step(gridFocus, dt) | step(phFocus, dt) | step(playerFocus, dt) | scroll.step(dt);
+        boolean gridMoving = step(gridFocus, dt) | step(phFocus, dt) | step(playerFocus, dt) | scroll.step(dt) | shelfScroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt);
         boolean returning = tickReturn(dt);
@@ -1952,8 +1954,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (phGrid >= 0) {   // from an empty slot: back on the same empty slot of the shelf
             shelfIndex = pinnedCount + phGrid;
             phGrid = -1;
-        } else if (gridIndex < Math.min(COLUMNS, pinnedCount)) shelfIndex = gridIndex;   // back on the same app of the first row
-        else shelfIndex = Math.min(shelfIndex, Math.max(0, Math.min(COLUMNS, shelf.size()) - 1));
+        } else if (gridIndex < pinnedCount) shelfIndex = gridIndex;   // back on the same app of the first row
+        else shelfIndex = Math.min(shelfIndex, Math.max(0, shelf.size() - 1));
         zone = Z_SHELF;
         sheetOpen = false;
         sheet.target = 0;
@@ -1961,7 +1963,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private int pinnedRows() {
-        return (pinnedCount + COLUMNS - 1) / COLUMNS;
+        return pinnedCount > 0 ? 1 : 0;   // the favorites are always ONE row (it scrolls sideways)
     }
 
     private int panelRows() {
@@ -1969,17 +1971,37 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private int rowOf(int i) {
-        return i < pinnedCount ? i / COLUMNS : pinnedRows() + (i - pinnedCount) / COLUMNS;
+        return i < pinnedCount ? 0 : pinnedRows() + (i - pinnedCount) / COLUMNS;
     }
 
     private int colOf(int i) {
-        return i < pinnedCount ? i % COLUMNS : (i - pinnedCount) % COLUMNS;
+        return i < pinnedCount ? i : (i - pinnedCount) % COLUMNS;   // a favorite's column is its place in the (long) row
+    }
+
+    /** The column on screen: for the favorites, less what the row is scrolled. */
+    private int visCol(int i) {
+        return i < pinnedCount ? Math.max(0, Math.min(COLUMNS - 1, i - shelfFirst)) : colOf(i);
+    }
+
+    /** Scrolls the favorites row so the item (an app, or an empty slot after the last) is on screen. */
+    private void scrollShelfTo(int idx, boolean snap) {
+        int total = pinnedCount + phCount();
+        int first = shelfFirst;
+        if (total <= COLUMNS) first = 0;
+        else {
+            if (idx < first) first = idx;
+            if (idx > first + COLUMNS - 1) first = idx - COLUMNS + 1;
+            first = Math.max(0, Math.min(total - COLUMNS, first));
+        }
+        shelfFirst = first;
+        shelfScroll.target = first;
+        if (snap) shelfScroll.snap(first);
     }
 
     /** The item at a row and column (the last of the row if it is a short one). */
     private int idxAt(int row, int col) {
         int pr = pinnedRows();
-        if (row < pr) return Math.min(row * COLUMNS + col, pinnedCount - 1);
+        if (row < pr) return Math.max(0, Math.min(shelfFirst + col, pinnedCount - 1));
         return Math.min(pinnedCount + (row - pr) * COLUMNS + col, panel.size() - 1);
     }
 
@@ -1999,7 +2021,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Cell of item i with the panel scrolled by `scrollRows` rows. */
     private void panelRect(int i, float scrollRows, RectF out) {
         float gap = ((CONTENT_R - MARGIN) - COLUMNS * P_W) / (COLUMNS - 1);
-        float x = (MARGIN + colOf(i) * (P_W + gap)) * k;
+        float x = (MARGIN + (i < pinnedCount ? i - shelfScroll.value : colOf(i)) * (P_W + gap)) * k;
         float y = (firstTop() + (rowOf(i) - scrollRows) * pitch()) * k;
         out.set(x, y, x + P_W * k, y + P_H * k);
     }
@@ -2010,6 +2032,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (snap) phFocus[i].snap(phFocus[i].target);
         }
         int focusAt = sheetOpen ? (phGrid >= 0 ? -1 : gridIndex) : zone == Z_SHELF && !onPlaceholder() ? shelfIndex : -1;   // closed: the home screen's first row (an empty slot is no app of the panel)
+        if (sheetOpen && phGrid >= 0) scrollShelfTo(pinnedCount + phGrid, snap);
+        else if (!sheetOpen && onPlaceholder()) scrollShelfTo(shelfIndex, snap);
+        else if (focusAt >= 0 && focusAt < pinnedCount) scrollShelfTo(focusAt, snap);
         for (int i = 0; i < gridFocus.length; i++) {
             gridFocus[i].target = i == focusAt ? 1 : 0;
             if (snap) gridFocus[i].snap(gridFocus[i].target);
@@ -2049,7 +2074,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int n = panel.size();
         if (n == 0) return;
         c.save();
-        c.clipRect(0, top + (P_CLIP * k - top) * o, w, closedBottom + (h - closedBottom) * o);   // at rest: only the first row
+        float clipL = pinnedCount > COLUMNS ? (MARGIN - 34) * k : 0, clipR = pinnedCount > COLUMNS ? (CONTENT_R + 34) * k : w;   // a long row of favorites is cut at the margins
+        c.clipRect(clipL, top + (P_CLIP * k - top) * o, clipR, closedBottom + (h - closedBottom) * o);   // at rest: only the first row
         float sc = scroll.value;
         if (pinnedCount > 0 && pinnedCount < n) {   // thin white line between the pinned apps and all the apps
             float y = (firstTop() + (pinnedRows() - sc) * pitch() - (pitch() - P_H) / 2f) * k;
@@ -2059,7 +2085,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int focused = -1;
         for (int i = 0; i < n; i++) {
             panelRect(i, sc, tmp);
-            if (tmp.bottom < P_CLIP * k - 20 * k || tmp.top + sheetLayer.getTranslationY() > h) continue;
+            if (tmp.bottom < P_CLIP * k - 20 * k || tmp.top + sheetLayer.getTranslationY() > h || tmp.right < clipL || tmp.left > clipR) continue;
             if (sheetOpen && phGrid < 0 && i == gridIndex) focused = i;
             if (i != focused) drawPanelCell(c, i);
         }
@@ -2207,7 +2233,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawPlaceholder(Canvas c, int slot, float sc) {
         // Row 0, the column after the last pinned app (panelRect would treat the index as an unpinned app on row 1).
         float gap = ((CONTENT_R - MARGIN) - COLUMNS * P_W) / (COLUMNS - 1);
-        float px = (MARGIN + (pinnedCount + slot) * (P_W + gap)) * k, py = (firstTop() - sc * pitch()) * k;
+        float px = (MARGIN + (pinnedCount + slot - shelfScroll.value) * (P_W + gap)) * k, py = (firstTop() - sc * pitch()) * k;
         tmp.set(px, py, px + P_W * k, py + P_H * k);
         float f = phFocus[slot].value, fc = Ui.clamp(f), s = 1 + 0.07f * f;
         float cx = tmp.centerX(), cy = tmp.centerY(), hw = tmp.width() * s / 2, hh = tmp.height() * s / 2, rad = P_RADIUS_CELL * k * s;
@@ -2663,7 +2689,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (zone) {
             case Z_SHELF:
                 if (dx != 0) {
-                    int slots = Math.min(shelf.size(), COLUMNS) + phCount();   // the apps and the empty slots
+                    int slots = shelf.size() + phCount();   // the apps and the empty slots
                     if (slots < 2) return;
                     int next = (shelfIndex + dx + slots) % slots;   // endless: past the last one comes the first, and the other way round
                     if (next == shelfIndex) return;
@@ -2762,7 +2788,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return;
             } else {
                 if (panelRows() < 2) return;
-                int col = pinnedCount + phGrid;
+                int col = Math.max(0, Math.min(COLUMNS - 1, pinnedCount + phGrid - shelfFirst));
                 phGrid = -1;
                 gridIndex = idxAt(1, col);
             }
@@ -2771,7 +2797,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             gridDirty = true;
             return;
         }
-        int r = rowOf(gridIndex), col = colOf(gridIndex);
+        int r = rowOf(gridIndex), col = visCol(gridIndex);
         int next = gridIndex;
         if (dx != 0) {
             int candidate = gridIndex + dx;
@@ -2789,7 +2815,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 gridDirty = true;
                 return;
             } else {
-                next = idxAt(r, dx > 0 ? 0 : COLUMNS - 1);   // endless along the row, as on the shelf
+                next = r == 0 ? (dx > 0 ? 0 : Math.max(0, pinnedCount - 1)) : idxAt(r, dx > 0 ? 0 : COLUMNS - 1);   // endless along the row, as on the shelf
             }
         } else {
             int targetRow = r + dy;
@@ -2798,14 +2824,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 click.move();
                 return;
             }
-            if (targetRow == 0 && phCount() > 0 && col >= pinnedCount) {   // up into an empty slot of the first row
-                phGrid = col - pinnedCount;
+            if (targetRow == 0 && phCount() > 0 && shelfFirst + col >= pinnedCount) {   // up into an empty slot of the first row
+                phGrid = Math.min(phCount() - 1, shelfFirst + col - pinnedCount);
                 retargetGrid(false);
                 click.move();
                 gridDirty = true;
                 return;
             }
-            if (targetRow < panelRows()) next = idxAt(targetRow, col);
+            if (targetRow < panelRows()) next = idxAt(targetRow, col);   // (row 0 = the favorites: its column counts from the scrolled row)
         }
         if (next == gridIndex) return;
         gridIndex = next;
@@ -2841,6 +2867,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
             it = HomeApps.app(p.pkg, Recs.serviceName(p));
+            if (!p.music && p.left == null) it.title = p.title;
             r = heroButton;
         } else if (zone == Z_STATUS) {
             if (statusItems.isEmpty()) return;
@@ -2862,6 +2889,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (p == null || p.pkg == null) return;
             if (p.music && nowPlaying.visible() && !nowPlaying.playing) nowPlaying.toggle();   // the song goes on where it was
             it = HomeApps.app(p.pkg, Recs.serviceName(p));
+            if (!p.music && p.left == null) it.title = p.title;   // a suggestion: the app is asked for that title (a "continue watching" card just opens the app)
             r = cardRects[cardIndex];
         } else {
             if (onPlaceholder() || shelf.isEmpty() || shelfIndex >= shelf.size()) {
@@ -2963,7 +2991,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // Its place in the panel's first row (the shelf) or, if it isn't there, the middle of that row.
             int idx = -1;
             String want = pkg != null ? pkg : it.pkg;
-            for (int i = 0; i < shelf.size() && i < COLUMNS; i++) if (want != null && want.equals(shelf.get(i).pkg)) idx = i;   // the shelf is the panel's first row
+            for (int i = 0; i < shelf.size(); i++) if (want != null && want.equals(shelf.get(i).pkg)) idx = i;   // the shelf is the panel's first row
             if (idx >= 0) {
                 panelRect(idx, 0, returnTo);
             } else {

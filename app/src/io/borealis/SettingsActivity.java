@@ -1099,7 +1099,7 @@ public class SettingsActivity extends Activity {
                         invalidate();
                     } else if (down && screen == GROUP) {
                         int id = groupIds()[focus];
-                        if ((id < 100 && id != WALLPAPER_ROW) || id == ID_SPLASH || id == ID_SOUND || id == ID_UPDATE_AUTO) {
+                        if ((id < 100 && id != WALLPAPER_ROW) || id == ID_SPLASH || id == ID_SOUND || id == ID_UPDATE_AUTO || id == ID_BOOT_HOME) {
                             adjustSetting(id, e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                             invalidate();
                         }
@@ -1244,7 +1244,7 @@ public class SettingsActivity extends Activity {
                     return ids;
                 }
                 case 3: return sortedByName(0, 1, 3, 4, ID_REMOTE, ID_WELCOME);
-                default: return sortedByName(ID_LAUNCHER, ID_TV, ID_REBOOT, ID_UPDATE, ID_UPDATE_AUTO);
+                default: return sortedByName(ID_LAUNCHER, ID_TV, ID_REBOOT, ID_BOOT_HOME, ID_UPDATE, ID_UPDATE_AUTO);
             }
         }
 
@@ -1267,6 +1267,7 @@ public class SettingsActivity extends Activity {
                 case ID_SOUND: return Ui.tr("Som de abertura", "Startup sound", "Sonido de inicio");
                 case ID_TV: return Ui.tr("Ajustes da TV", "TV Settings", "Ajustes de la TV");
                 case ID_REBOOT: return Ui.tr("Reiniciar a TV", "Restart the TV", "Reiniciar TV");
+                case ID_BOOT_HOME: return Ui.tr("Abrir o início ao ligar a TV", "Open the home screen when the TV turns on", "Abrir el inicio al encender el TV");
                 case ID_CUSTOM_WP: return Ui.tr("Fundo personalizado", "Custom wallpaper", "Fondo personalizado");
                 case ID_REMOTE: return Ui.tr("Botão de ajustes do controle", "Remote's settings button", "Botón de ajustes del control");
                 case ID_WELCOME: return Ui.tr("Repetir as boas-vindas", "Replay the welcome", "Repetir bienvenida");
@@ -1283,6 +1284,7 @@ public class SettingsActivity extends Activity {
                     return at >= 0 && at < Prefs.SAVER_NAMES.length ? Prefs.SAVER_NAMES[at] : "";
                 }
                 case ID_SPLASH: return onOff(Prefs.splash());
+                case ID_BOOT_HOME: return onOff(Prefs.homeOnBoot());
                 case ID_SOUND: return onOff(Prefs.startupSound());
                 case ID_REMOTE: return onOff(remoteButtonOn());
                 case ID_SHELF: case ID_TV: case ID_WELCOME: case ID_REBOOT: return "";
@@ -1569,7 +1571,7 @@ public class SettingsActivity extends Activity {
         /** Home Settings: language, temperature, theme, weather, quotes, then one row per coin. */
         private static final int COIN_ROWS = 10, WALLPAPER_ROW = 9;
         /** Rows of a group that are not in the old Home Settings list: screensaver, shelf, launcher, TV settings. */
-        private static final int ID_SAVER = 100, ID_SHELF = 101, ID_LAUNCHER = 102, ID_TV = 103, ID_SPLASH = 104, ID_WELCOME = 105, ID_SOUND = 106, ID_REMOTE = 107, ID_UPDATE = 108, ID_UPDATE_AUTO = 109, ID_HIDDEN = 110, ID_REBOOT = 111, ID_CUSTOM_WP = 112;
+        private static final int ID_SAVER = 100, ID_SHELF = 101, ID_LAUNCHER = 102, ID_TV = 103, ID_SPLASH = 104, ID_WELCOME = 105, ID_SOUND = 106, ID_REMOTE = 107, ID_UPDATE = 108, ID_UPDATE_AUTO = 109, ID_HIDDEN = 110, ID_REBOOT = 111, ID_CUSTOM_WP = 112, ID_BOOT_HOME = 113;
         private static final float CARD_H = 130, CARD_GAP = 14;
 
         private boolean dollar() {
@@ -1735,6 +1737,7 @@ public class SettingsActivity extends Activity {
                 case 8: Prefs.setQuotes(!Prefs.quotes()); break;
                 case WALLPAPER_ROW: openWallpapers(false, false); return;
                 case ID_SPLASH: Prefs.setSplash(!Prefs.splash()); return;
+                case ID_BOOT_HOME: Prefs.setHomeOnBoot(!Prefs.homeOnBoot()); return;
                 case ID_UPDATE_AUTO: Prefs.setUpdateAuto(!Prefs.updateAuto()); return;
                 case ID_REMOTE: askRemoteButton(); return;
                 case ID_SOUND: Prefs.setStartupSound(!Prefs.startupSound()); if (Prefs.startupSound()) StartupSound.play(getContext()); return;
@@ -2092,9 +2095,9 @@ public class SettingsActivity extends Activity {
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (listRowH() + listRowGap()) + 36) * k;
-            c.drawText(Ui.tr("OK põe ou tira da prateleira (até " + HomeApps.MAX_SHELF + "). ← → mudam a ordem.",
-                    "OK adds or removes (up to " + HomeApps.MAX_SHELF + "). ← → change the order.",
-                    "OK pone o quita del estante (hasta " + HomeApps.MAX_SHELF + "). ← → cambian el orden."), LIST_X * k + 30 * k, hy, hint);
+            c.drawText(Ui.tr("OK põe ou tira da prateleira. ← → mudam a ordem.",
+                    "OK adds or removes. ← → change the order.",
+                    "OK pone o quita del estante (sin límite). ← → cambian el orden."), LIST_X * k + 30 * k, hy, hint);
         }
 
         // MARK: - Wallpaper screen

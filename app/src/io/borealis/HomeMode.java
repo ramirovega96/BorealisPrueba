@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -102,6 +103,7 @@ final class HomeMode {
 
     /** After the TV boots (and after a TV update): wait for the system to settle and check Borealis mode. */
     static void bootCheck(Context c) {
+        if (Prefs.homeOnBoot()) ModeJob.schedule(c, ModeJob.BOOT_HOME, null, 25_000);   // the TV has already gone back to its last input by then
         ensureRemoteService(c, 30_000);
         ModeJob.schedule(c, ModeJob.VERIFY, null, 45_000);
     }
@@ -166,6 +168,33 @@ final class HomeMode {
             if (sleep > 0 && sleep <= ms) adb.shell("settings put secure sleep_timeout " + (ms + 30 * 60_000L));
         } catch (IOException e) {
             AppLog.w("screensaver time: " + e.getMessage());
+        }
+    }
+
+    /**
+     * After the TV boots it returns to the input it was on (HDMI 1...). Once it has settled, asks for the home screen
+     * (through the TV's own adb, which may start a screen from the background). Does nothing if Borealis is already
+     * showing. If the TV is still on an input a while later, asks once more.
+     */
+    static void bootHomeNow(Context app) {
+        if (!Prefs.homeOnBoot()) return;
+        try (Adb adb = Adb.connect(app, 10_000, null)) {
+            for (int attempt = 0; attempt < 2; attempt++) {
+                String top = adb.shell("dumpsys activity activities | grep -i 'ResumedActivity'").toLowerCase(Locale.ROOT);
+                boolean onOurs = top.contains(PKG);
+                boolean onInput = top.contains("hdmi") || top.contains("passthrough") || top.contains("tvinput") || top.contains("tv.input")
+                        || top.contains("tvapp") || top.contains("tvcenter");
+                if (onOurs) return;
+                if (attempt == 0 || onInput) {   // the first time always; the second only if it is still on an input
+                    adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+                    AppLog.w("boot: asked for the home screen (was on: " + top.trim() + ")");
+                } else {
+                    return;
+                }
+                try { Thread.sleep(15_000); } catch (InterruptedException e) { return; }
+            }
+        } catch (IOException e) {
+            AppLog.w("boot home: " + e.getMessage());
         }
     }
 

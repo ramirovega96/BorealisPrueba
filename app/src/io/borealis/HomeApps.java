@@ -76,6 +76,7 @@ final class HomeApps {
         float logoInk;      // fraction of the logo with ink (thin logos are drawn larger, with the same "weight")
         float logoScale = 1; // size tweak by eye (compact logos need more)
         boolean connected = true;
+        String title;       // for a recommendation: the title to look for inside the app (see open)
     }
 
     /**
@@ -97,7 +98,8 @@ final class HomeApps {
         {"peacock", "Peacock", "com.peacocktv.peacockandroid", "6E55DC", "", "1"},
         {"globoplay", "Globoplay", "com.globo.globotv", "FF5A1F", "tint", "1"},
     };
-    static final int MAX_SHELF = 7;   // one row of the panel
+    static final int MAX_SHELF = 80;   // one row that scrolls sideways: in practice no limit
+    static final int DEFAULT_SHELF = 7;   // how many apps the built-in list pins (before the person picks their own)
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
     static final String[] LIVE_TV_APPS = {"com.tcl.tv", "com.google.android.tv", "com.mediatek.wwtv.tvcenter", "com.sony.dtv.tvx"};
     /** Kept out of "All Apps" (only hidden, still installed). Add the ones your TV shows that you never use. */
@@ -183,7 +185,7 @@ final class HomeApps {
         if (custom != null) return custom.size() > MAX_SHELF ? new ArrayList<>(custom.subList(0, MAX_SHELF)) : custom;
         List<String> out = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
-        for (String[] d : SHELF) if (out.size() < MAX_SHELF && launchIntent(pm, d[2]) != null) out.add(d[2]);
+        for (String[] d : SHELF) if (out.size() < DEFAULT_SHELF && launchIntent(pm, d[2]) != null) out.add(d[2]);
         return out;
     }
 
@@ -312,8 +314,9 @@ final class HomeApps {
             } catch (RuntimeException ignored) {
             }
             String reported = devices.containsKey(info.getId()) ? devices.get(info.getId()) : "";
-            String label = custom != null && custom.length() > 0 ? custom.toString()
-                    : !reported.isEmpty() && state == TvInputManager.INPUT_STATE_CONNECTED ? reported : "HDMI " + number;
+            String label = custom != null && custom.length() > 0 ? cleanName(custom.toString())
+                    : !reported.isEmpty() && state == TvInputManager.INPUT_STATE_CONNECTED ? cleanName(reported) : "HDMI " + number;
+            if (label.isEmpty()) label = "HDMI " + number;
             String symbol = state == TvInputManager.INPUT_STATE_CONNECTED || custom != null
                     ? deviceSymbol(label) : "hdmi";
             Item it = shortcut(INPUT, "hdmi" + number, label, symbol);
@@ -324,6 +327,13 @@ final class HomeApps {
         }
         Collections.sort(out, (a, b) -> a.number.compareTo(b.number));
         return out;
+    }
+
+    /** Some TVs report a device as "Receptor digital&DIGITAL_RECEIVER" (the name, then the system's own id): only the name is kept. */
+    static String cleanName(String name) {
+        if (name == null) return "";
+        int cut = name.indexOf('&');
+        return (cut >= 0 ? name.substring(0, cut) : name).trim();
     }
 
     /** Words in a device's name, by the icon they pick: a game console, a streaming box, a sound system, a TV box. */
@@ -430,6 +440,7 @@ final class HomeApps {
         Intent intent;
         switch (it.kind) {
             case APP:
+                if (it.title != null && !it.title.isEmpty() && openTitle(a, it, from, x, y, w, h, quiet)) return true;
                 intent = launchIntent(a.getPackageManager(), it.pkg);
                 if (intent != null) intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                 break;
@@ -467,22 +478,65 @@ final class HomeApps {
     }
 
     /**
+     * A recommendation: asks the app itself to play (or show) that title, the same request Google Assistant makes for
+     * "play X on Netflix" (MEDIA_PLAY_FROM_SEARCH). Not every app answers it; if this one doesn't, false is returned and
+     * the caller simply opens the app.
+     */
+    private static boolean openTitle(Activity a, Item it, View from, int x, int y, int w, int h, boolean quiet) {
+        Intent play = new Intent("android.media.action.MEDIA_PLAY_FROM_SEARCH")
+                .setPackage(it.pkg)
+                .putExtra(android.app.SearchManager.QUERY, it.title)
+                .putExtra("android.intent.extra.title", it.title)
+                .putExtra("android.intent.extra.focus", "vnd.android.cursor.item/*")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            ActivityOptions options = quiet ? ActivityOptions.makeCustomAnimation(a, 0, 0)
+                    : ActivityOptions.makeScaleUpAnimation(from, x, y, Math.max(w, 1), Math.max(h, 1));
+            a.startActivity(play, options.toBundle());
+            return true;
+        } catch (ActivityNotFoundException | SecurityException e) {
+            AppLog.w("title not opened in " + it.pkg + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Bluetooth settings: TV makers hide or rename this screen, so several known places are tried in order and, if
      * none exists, the TV's main settings open (where "Remotes & accessories" lives).
      */
     private static boolean openBluetooth(Activity a, View from, int x, int y, int w, int h) {
-        Intent[] tries = {
-                new Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
-                new Intent().setComponent(new ComponentName("com.android.settings", "com.android.settings.bluetooth.BluetoothSettings")),
-                new Intent(Settings.ACTION_SETTINGS),
-        };
-        for (int n = 0; n < tries.length; n++) {
-            Intent i = tries[n];
+        List<Intent> tries = new ArrayList<>();
+        // 1. The TV's own settings apps: any screen that is about Bluetooth (not a pairing pop-up).
+        PackageManager pm = a.getPackageManager();
+        String[] settingsApps = {"org.droidtv.settings", "com.android.tv.settings", "com.google.android.tvsettings", "com.android.settings"};
+        for (String pkg : settingsApps) {
+            try {
+                android.content.pm.PackageInfo info = pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES);
+                if (info.activities == null) continue;
+                for (android.content.pm.ActivityInfo ai : info.activities) {
+                    String name = ai.name.toLowerCase(Locale.ROOT);
+                    if (!ai.exported || !name.contains("bluetooth")) continue;
+                    if (name.contains("pairing") || name.contains("dialog") || name.contains("request") || name.contains("receiver")
+                            || name.contains("opp") || name.contains("share") || name.contains("enable") || name.contains("permission")
+                            || name.contains("picker") || name.contains("accessibility")) continue;
+                    tries.add(new Intent().setComponent(new ComponentName(ai.packageName, ai.name)));
+                }
+            } catch (PackageManager.NameNotFoundException | RuntimeException ignored) {
+            }
+        }
+        // 2. The standard requests.
+        tries.add(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS));
+        tries.add(new Intent().setComponent(new ComponentName("com.android.settings", "com.android.settings.bluetooth.BluetoothSettings")));
+        tries.add(new Intent().setComponent(new ComponentName("com.android.tv.settings", "com.android.tv.settings.accessories.AddAccessoryActivity")));
+        // 3. Last resort: the TV's main settings (started from scratch, so they open even if left running behind).
+        tries.add(new Intent(Settings.ACTION_SETTINGS));
+        for (int n = 0; n < tries.size(); n++) {
+            Intent i = tries.get(n);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            // The last resort starts the TV settings from scratch, so it opens even if they were left running behind.
-            if (n == tries.length - 1) i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            if (n == tries.size() - 1) i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
             try {
                 a.startActivity(i, ActivityOptions.makeScaleUpAnimation(from, x, y, Math.max(w, 1), Math.max(h, 1)).toBundle());
+                AppLog.w("bluetooth settings opened with " + (i.getComponent() != null ? i.getComponent().flattenToShortString() : i.getAction()));
                 return true;
             } catch (ActivityNotFoundException | SecurityException e) {
                 AppLog.w("bluetooth settings try failed: " + e.getMessage());

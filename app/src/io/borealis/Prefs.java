@@ -290,6 +290,13 @@ final class Prefs {
     /** The Borealis opening when the TV turns on (on by default). */
     static boolean splash() { return sp().getBoolean("splash", true); }
     static void setSplash(boolean on) { put("splash", on); }
+    /** After the TV turns on, go to the home screen even if the TV came back on an input (HDMI 1...). Read from the main process too. */
+    @SuppressWarnings("deprecation")
+    static boolean homeOnBoot() {
+        if (app == null) return true;
+        return app.getSharedPreferences("settings", Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS).getBoolean("homeOnBoot", true);
+    }
+    static void setHomeOnBoot(boolean on) { put("homeOnBoot", on); }
     static boolean startupSound() { return sp().getBoolean("startupSound", true); }
     static void setStartupSound(boolean on) { put("startupSound", on); }
 

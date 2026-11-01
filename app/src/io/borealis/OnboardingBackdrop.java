@@ -36,7 +36,7 @@ final class OnboardingBackdrop extends View {
     OnboardingBackdrop(Context c) {
         super(c);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-        try (InputStream in = c.getAssets().open(Prefs.WALLPAPER_FILES[Prefs.wallpaper()])) {
+        try (InputStream in = Prefs.openWallpaper(c, Prefs.wallpaperFiles()[Prefs.wallpaper()])) {
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inSampleSize = 2;
             wall = BitmapFactory.decodeStream(in, null, o);
