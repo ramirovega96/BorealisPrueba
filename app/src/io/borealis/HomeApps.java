@@ -63,6 +63,8 @@ final class HomeApps {
     static final int UPDATE = 41;
     /** The power icon in the corner buttons: restarts the TV (after a confirmation). */
     static final int REBOOT = 42;
+    /** The magnifier in the corner buttons: opens the Play Store to look for apps. */
+    static final int STORE = 43;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -459,6 +461,8 @@ final class HomeApps {
             case WIFI:
                 intent = new Intent(Settings.ACTION_WIFI_SETTINGS);
                 break;
+            case STORE:
+                return openStoreSearch(a, from, x, y, w, h);
             case BLUETOOTH:
                 return openBluetooth(a, from, x, y, w, h);
             default:
@@ -475,6 +479,30 @@ final class HomeApps {
             AppLog.w("couldn't open " + it.label + ": " + e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * The Play Store's search: first as its own search page (an empty search), then as a search request to the Store, and
+     * only if the TV's Store answers neither, its home (which has the magnifier at the top).
+     */
+    private static boolean openStoreSearch(Activity a, View from, int x, int y, int w, int h) {
+        List<Intent> tries = new ArrayList<>();
+        tries.add(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://search?q=")).setPackage("com.android.vending"));
+        tries.add(new Intent(Intent.ACTION_SEARCH).setPackage("com.android.vending").putExtra(android.app.SearchManager.QUERY, ""));
+        tries.add(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://search?q=")));
+        Intent home = launchIntent(a.getPackageManager(), "com.android.vending");
+        if (home != null) tries.add(home);
+        for (Intent i : tries) {
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                a.startActivity(i, ActivityOptions.makeScaleUpAnimation(from, x, y, Math.max(w, 1), Math.max(h, 1)).toBundle());
+                AppLog.w("store opened with " + (i.getAction() != null ? i.getAction() : "launch") + " " + i.getDataString());
+                return true;
+            } catch (ActivityNotFoundException | SecurityException e) {
+                AppLog.w("store try failed: " + e.getMessage());
+            }
+        }
+        return false;
     }
 
     /**

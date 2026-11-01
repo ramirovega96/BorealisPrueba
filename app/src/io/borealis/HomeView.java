@@ -615,6 +615,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             lightButtons.add(HomeApps.action(HomeApps.UPDATE, "update", Ui.tr("Atualizar para ", "Update to ", "Actualizar a ") + newVersion, "bell"));
         }
         lightButtons.add(HomeApps.action(HomeApps.REBOOT, "reboot", Ui.tr("Reiniciar a TV", "Restart the TV", "Reiniciar TV"), "power"));   // next to Wi-Fi
+        lightButtons.add(HomeApps.action(HomeApps.STORE, "store", Ui.tr("Buscar apps na Play Store", "Search apps in the Play Store", "Buscar apps en Play Store"), "search"));
         lightButtons.add(HomeApps.action(HomeApps.WIFI, "wifi", "Wi-Fi", "wifi"));
         lightButtons.add(HomeApps.action(HomeApps.BLUETOOTH, "bluetooth", "Bluetooth", "bluetooth"));
         lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entrada de vídeo", "Video input", "Entrada de video"), "hdmi"));
