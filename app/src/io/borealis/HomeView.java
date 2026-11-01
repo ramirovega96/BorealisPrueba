@@ -79,7 +79,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int COLUMNS = 7, VISIBLE_ROWS = 3;
     // Apps panel (opens with Down from the shelf): 7 columns; pinned apps first, a thin line, then all apps A-Z.
     private static final float P_TOP = 106, P_RADIUS = 58, P_FIRST = 193, P_W = 196, P_H = 112, P_PITCH = 170, P_CLIP = 160, P_RADIUS_CELL = 17;
-    private static final float P_CLOSED_TOP = 823, P_CLOSED_FIRST = 174, P_CLOSED_PITCH = 154;   // the panel at rest on the home screen
+    // The panel at rest on the home screen: only its first row (the favorite apps), as a glass bar just under the greeting.
+    private static final float P_CLOSED_TOP = 296, P_CLOSED_FIRST = 150, P_CLOSED_PITCH = 154, P_CLOSED_H = 196;
     private static final boolean DRIFT = true;   // the background drifts slowly all the time (set false if the TV drops frames)
     private static final float GRID_W = 300, GRID_H = 169, GRID_GAP = 40, GRID_ROW = 239, GRID_TOP = 196, GRID_RADIUS = 22;
     private static final int SMOKE = 0xFF111113, INK = 0xFF1C1C1E, WHITE = 0xFFF5F5F7;
@@ -92,9 +93,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
-    private static final float L_TITLE_BASE = 178, L_HELLO_BASE = 133, L_TABBAR_TOP = 216, L_TABBAR_H = 54, L_CARDS_TOP = 302, L_CARD_H = 409;
-    private static final float L_TALL_W = 293, L_CARD_GAP = 54, L_BUTTON = 56, L_BUTTON_GAP = 32, L_BUTTON_CY = 147;
-    private static final float L_PLATTER_TOP = 835, L_TILE_H = 108;
+    private static final float L_TITLE_BASE = 178, L_HELLO_BASE = 133, L_TABBAR_TOP = 216, L_TABBAR_H = 54, L_CARDS_TOP = 580, L_CARD_H = 340, L_SECTION_CY = 534;
+    /** The row of recommendations: up to MAX_CARDS cards; the focused one is wide, the others compact; the row scrolls sideways. */
+    private static final int MAX_CARDS = 10;
+    private static final float L_WIDE_W = 784;
+    private static final float L_TALL_W = 243, L_CARD_GAP = 40, L_BUTTON = 56, L_BUTTON_GAP = 32, L_BUTTON_CY = 147;
+    private static final float L_PLATTER_TOP = 300, L_TILE_H = 108;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
     private static final String[] TABS = {"Explorar", "Filmes", "Séries"};
     private static final String[] TABS_EN = {"Explore", "Movies", "Shows"};
@@ -160,11 +164,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean menuOpen, menuDirty;
     private int menuIndex, menuButton;
     private long menuAt;
-    private final Spring[] cardFocus = new Spring[3];
-    private final Spring[] cardGrow = new Spring[3];   // 1 = the wide (expanded) card, 0 = the compact ones
+    private final Spring[] cardFocus = new Spring[MAX_CARDS];
+    private final Spring cardScroll = new Spring(0.34f, 1f, 0);   // how far the row of cards is scrolled to the left (px)
+    private final Spring[] cardGrow = new Spring[MAX_CARDS];   // 1 = the wide (expanded) card, 0 = the compact ones
     private final Rect srcRect = new Rect();
     private final Map<String, Bitmap> ownCards = new HashMap<>();   // the user's own tile art (assets/cards/<key>.png)
-    private final RectF[] cardRects = new RectF[3];
+    private final RectF[] cardRects = new RectF[MAX_CARDS];
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
     private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip;
     private Paint lHello, infoPaint, iconStroke, btnLabel, menuTag;
@@ -420,7 +425,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
         }
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < MAX_CARDS; i++) {
             cardFocus[i] = new Spring(0.32f, 0.78f, 0);
             cardGrow[i] = new Spring(0.42f, 0.86f, i == 0 ? 1 : 0);
             cardRects[i] = new RectF();
@@ -792,7 +797,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt), growMoving = step(cardGrow, dt);
-        if (growMoving) layoutCards();
+        boolean cardScrolling = cardScroll.step(dt);
+        if (growMoving || cardScrolling) layoutCards();
         if (topMoving) layoutButtons();
         boolean menuMoving = menu.step(dt), flashMoving = false;
         for (Spring sp : btnFlash) flashMoving |= sp.step(dt);
@@ -804,7 +810,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         menuLayer.setVisibility(menu.value > 0.002f || menuOpen || moving ? VISIBLE : INVISIBLE);
         if (menuOpen && up - menuAt > (screenReader() ? 30000 : 4000)) closeMenu();
         if (topMoving) status.invalidate();
-        heroMoving |= topMoving | cardsMoving | growMoving;
+        heroMoving |= topMoving | cardsMoving | growMoving | cardScrolling;
         boolean drawerItemsMoving = step(drawerFocus, dt);
         boolean gridMoving = step(gridFocus, dt) | step(phFocus, dt) | step(playerFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
@@ -1876,6 +1882,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean topChanged = aim(topFocus, !sheetOpen && (zone == Z_TOP || zone == Z_MENU) ? topIndex : -1, snap);
         heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
         heroChanged |= aim(cardGrow, cards.isEmpty() ? 0 : cardIndex, snap);
+        cardScroll.target = cardScrollTarget();
+        if (snap) cardScroll.snap(cardScroll.target);
         if (snap) layoutCards();
         statusChanged |= topChanged;
         tilesDirty |= snap || tilesChanged;
@@ -1931,7 +1939,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void openSheet() {
         if (panel.isEmpty()) return;
         sheetOpen = true;
-        gridIndex = zone == Z_SHELF ? Math.min(onPlaceholder() ? pinnedCount : shelfIndex, panel.size() - 1) : 0;   // the same app stays focused
+        gridIndex = zone == Z_SHELF ? Math.min(onPlaceholder() ? pinnedCount : shelfIndex, panel.size() - 1)   // the same app stays focused
+                : zone == Z_CARDS && panel.size() > pinnedCount ? pinnedCount : 0;   // from the cards: the first of the other apps
         scroll.snap(0);
         retargetGrid(true);
         retarget(false);
@@ -2025,20 +2034,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void drawSheet(Canvas c) {
         float top = P_TOP * k, rad = P_RADIUS * k;
-        ringRect.set(0, top, w, h + rad);
+        // At rest only the first row (the favorites) shows, on a glass bar; opening, the glass grows to the whole screen.
+        float o = openness(), closedBottom = (P_TOP + P_CLOSED_H) * k;
+        ringRect.set((MARGIN - 40) * k * (1 - o), top, w + ((CONTENT_R + 40) * k - w) * (1 - o), closedBottom + (h + rad - closedBottom) * o);
         fill.setShader(null);
         fill.setColor(0x73000000);
         c.drawRoundRect(ringRect, rad, rad, fill);
         border.setColor(0x26FFFFFF);
         c.drawRoundRect(ringRect, rad, rad, border);
-        fill.setColor(0xE6FFFFFF);
+        fill.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * Ui.clamp(o * 2f - 0.5f)));   // the handle shows only while it opens
         tmp.set(w / 2f - 62 * k, 135 * k, w / 2f + 62 * k, 145 * k);
         c.drawRoundRect(tmp, 5 * k, 5 * k, fill);
         drawPlayer(c);
         int n = panel.size();
         if (n == 0) return;
         c.save();
-        c.clipRect(0, P_CLIP * k, w, h);
+        c.clipRect(0, top + (P_CLIP * k - top) * o, w, closedBottom + (h - closedBottom) * o);   // at rest: only the first row
         float sc = scroll.value;
         if (pinnedCount > 0 && pinnedCount < n) {   // thin white line between the pinned apps and all the apps
             float y = (firstTop() + (pinnedRows() - sc) * pitch() - (pitch() - P_H) / 2f) * k;
@@ -2165,7 +2176,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The first thing that can hold focus in the top row: the selected tab, or (without tabs) the first corner button. */
     private int topHome() {
-        return tabsVisible() ? tab : 3 + bellOffset();
+        return tabsVisible() ? tab : 3 + bellOffset() + 1;   // (the power button is first; the focus starts on Wi-Fi)
     }
 
     private String sectionTitle = "";
@@ -3070,7 +3081,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (topHome() < 3 + lightButtons.size()) {
             out.add(a11yId(Z_TOP, topHome()));
         }
-        int nc = Math.min(3, cards.size());
+        int nc = Math.min(MAX_CARDS, cards.size());
         if (zone == Z_CARDS || other) {
             for (int i = 0; i < nc; i++) out.add(a11yId(Z_CARDS, i));
         } else if (nc > 0) {
@@ -3117,7 +3128,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_SHELF: return label(shelf, i);
             case WRAP: {   // 0/1: before the first / after the last card; 2/3: the same on the shelf. They read the item they lead to.
                 boolean cardsRow = i < 2, after = i % 2 == 1;
-                if (cardsRow) return cards.isEmpty() ? "" : pickText(cards.get(after ? 0 : Math.min(3, cards.size()) - 1));
+                if (cardsRow) return cards.isEmpty() ? "" : pickText(cards.get(after ? 0 : Math.min(MAX_CARDS, cards.size()) - 1));
                 return shelf.isEmpty() ? "" : label(shelf, after ? 0 : shelf.size() - 1);
             }
             case A11Y_ALL: return Ui.tr("Todas as apps, abrir", "All apps, open", "Todas las apps, abrir");
@@ -3136,7 +3147,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case WRAP: {
                 boolean cardsRow = i < 2, after = i % 2 == 1;
                 RectF[] rects = cardsRow ? cardRects : tileRects;
-                int count = cardsRow ? Math.min(3, cards.size()) : Math.min(shelf.size(), rects.length);
+                int count = cardsRow ? Math.min(MAX_CARDS, cards.size()) : Math.min(shelf.size(), rects.length);
                 if (count < 2) return false;
                 RectF edge = rects[after ? count - 1 : 0];
                 float gap = 6 * k, width = 18 * k;
@@ -3169,7 +3180,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 dy = (i < 3 ? heroLayer : status).getTranslationY();
                 break;
             case Z_CARDS:
-                if (i >= Math.min(3, cards.size())) return false;
+                if (i >= Math.min(MAX_CARDS, cards.size())) return false;
                 a11yRect.set(cardRects[i]);
                 dy = heroLayer.getTranslationY();
                 break;
@@ -3223,7 +3234,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (group == WRAP) {
             boolean cardsRow = i < 2, after = i % 2 == 1;
             if (cardsRow) {
-                int n = Math.min(3, cards.size());
+                int n = Math.min(MAX_CARDS, cards.size());
                 if (n < 2) return;
                 cardIndex = after ? 0 : n - 1;
                 zone = Z_CARDS;
@@ -3313,14 +3324,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The three cards side by side: the expanded one is wide, the others compact, and each width follows its spring. */
     private void layoutCards() {
-        float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, x = MARGIN * k, tall = L_TALL_W * k;
-        float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g;
-        for (int i = 0; i < 3; i++) {
+        float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, x = MARGIN * k - cardScroll.value;
+        float tall = L_TALL_W * k, wide = L_WIDE_W * k;
+        for (int i = 0; i < MAX_CARDS; i++) {
             float cw = tall + (wide - tall) * cardGrow[i].value;
             cardRects[i].set(x, top, x + cw, top + ch);
             x += cw + g;
         }
         heroDirty = true;
+    }
+
+    /** How far (px) the row of cards must be scrolled so the focused card starts at the left margin (the last ones stop at the right margin). */
+    private float cardScrollTarget() {
+        int n = Math.min(MAX_CARDS, cards.size());
+        if (n <= 1) return 0;
+        float total = L_WIDE_W + (n - 1) * (L_TALL_W + L_CARD_GAP);   // with the focused card wide and the others compact
+        float visible = CONTENT_R - MARGIN;
+        if (total <= visible) return 0;
+        int f = Math.max(0, Math.min(cardIndex, n - 1));
+        float left = f * (L_TALL_W + L_CARD_GAP);   // the cards before the focused one are all compact
+        return Math.min(left, total - visible) * k;
     }
 
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
@@ -3334,17 +3357,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (recentCards()) {
             // What was being watched first; if there are fewer than three, TMDB's picks fill the rest (never an empty card).
             list = watched.picks(null);
-            if (list.size() < 3) {
+            if (list.size() < MAX_CARDS) {
                 java.util.Set<String> seen = new java.util.HashSet<>();
                 for (Recs.Pick p : list) seen.add(p.title == null ? "" : p.title.toLowerCase(java.util.Locale.ROOT));
                 for (Recs.Pick r : recs.now(null)) {
-                    if (list.size() >= 3) break;
+                    if (list.size() >= MAX_CARDS) break;
                     if (seen.add(r.title == null ? "" : r.title.toLowerCase(java.util.Locale.ROOT))) list.add(r);
                 }
             }
         } else {
             list = recs.now(TAB_KIND[tab]);
         }
+        if (list.size() > MAX_CARDS) list = new ArrayList<>(list.subList(0, MAX_CARDS));
         if (!samePicks(list, cards)) {
             cards = list;
             cardIndex = Math.min(cardIndex, Math.max(0, list.size() - 1));
@@ -3519,12 +3543,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 p.setColor(old);
             }
         } else {
-            float ty = (L_TABBAR_TOP + L_TABBAR_H / 2f) * k + Ui.halfCap(sectionPaint);
+            float ty = L_SECTION_CY * k + Ui.halfCap(sectionPaint);   // above the cards, under the favorite apps
             c.drawText(sectionTitle, MARGIN * k - Ui.leftBearing(sectionPaint, sectionTitle), ty, sectionPaint);
         }
         int top = -1;
-        for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
-        for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
+        int shownCards = recentCards() ? Math.min(MAX_CARDS, cards.size()) : Math.max(3, Math.min(MAX_CARDS, cards.size()));
+        for (int i = 0; i < shownCards; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
+        for (int i = 0; i < shownCards; i++) if (i != top) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
         if (cards.isEmpty() && recentCards()) drawNothingToContinue(c);
         if (HomeData.coinCount() > 0) drawQuotes(c);
@@ -3537,8 +3562,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawLightCard(Canvas c, int i) {
         RectF base = cardRects[i];
+        if (base.right < -60 * k || base.left > w + 60 * k) return;   // scrolled out of the screen: nothing to draw (or to load)
         Recs.Pick p = i < cards.size() ? cards.get(i) : null;
-        if (p == null && recentCards()) return;    // fewer than three: no empty boxes
+        if (p == null && recentCards()) return;    // fewer than the row holds: no empty boxes
         float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.05f * v;
         float bw = base.width(), bh = base.height(), r0 = 18 * k;
         float cx = base.centerX(), cy = base.centerY() - 6 * k * v;
@@ -4175,16 +4201,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean moveLight(int dx, int dy) {
         switch (zone) {
-            case Z_SHELF:
-                if (dy >= 0 || shelf.isEmpty()) return false;
-                if (playerShown()) {
-                    zone = Z_PLAYER;
-                } else if (cards.isEmpty()) {
+            case Z_SHELF:   // the favorite apps are the first row: up are the tabs and buttons, down the recommendations, then all the apps
+                if (dy == 0 || shelf.isEmpty()) return false;
+                if (dy < 0) {
                     zone = Z_TOP;
                     topIndex = topHome();
-                } else {
+                } else if (!cards.isEmpty()) {
                     zone = Z_CARDS;
                     cardIndex = Math.min(cardIndex, cards.size() - 1);   // goes back to the card we left
+                } else {
+                    return false;   // nothing to recommend: Down opens the panel with all the apps (move())
                 }
                 break;
             case Z_CARDS:
@@ -4195,13 +4221,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (next == cardIndex) return true;
                     cardIndex = next;
                 } else if (dy < 0) {
-                    zone = Z_TOP;
-                    topIndex = topHome();     // as on Apple TV: moving up to the tabs focuses the selected tab
-                } else if (playerShown()) {
-                    zone = Z_PLAYER;
+                    if (!shelf.isEmpty()) {
+                        zone = Z_SHELF;
+                        shelfIndex = Math.min(shelfIndex, shelf.size() - 1);   // goes back to the app we left
+                    } else {
+                        zone = Z_TOP;
+                        topIndex = topHome();
+                    }
                 } else {
-                    zone = Z_SHELF;
-                    if (!shelf.isEmpty()) shelfIndex = Math.min(shelfIndex, shelf.size() - 1);   // goes back to the app we left
+                    if (panel.isEmpty()) return true;
+                    openSheet();   // below the recommendations: all the other apps
+                    click.move();
+                    return true;
                 }
                 break;
             case Z_PLAYER:
@@ -4224,15 +4255,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_TOP:
                 if (dx != 0) {
-                    int next = Math.max(tabsVisible() ? 0 : 3, Math.min(7, topIndex + dx));
+                    int next = Math.max(tabsVisible() ? 0 : 3, Math.min(2 + lightButtons.size(), topIndex + dx));
                     if (next == topIndex) return true;
                     topIndex = next;   // focus only moves the ring; OK selects the tab
                 } else if (dy > 0) {
-                    if (cards.isEmpty()) {
-                        zone = playerShown() ? Z_PLAYER : Z_SHELF;
-                    } else {
+                    if (!shelf.isEmpty()) {
+                        zone = Z_SHELF;
+                        shelfIndex = Math.min(shelfIndex, shelf.size() - 1);
+                    } else if (!cards.isEmpty()) {
                         zone = Z_CARDS;
                         cardIndex = Math.min(cardIndex, cards.size() - 1);
+                    } else {
+                        return true;
                     }
                 } else {
                     return true;
