@@ -3519,7 +3519,7 @@ public class SettingsActivity extends Activity {
             }
             if (screen == HOME_CHOICE) {
                 boolean wantFree = focus == 0;
-                if (wantFree != freeActive() && !busy()) {   // soft Home counts as not-yet-full: choosing Borealis tries ADB again
+                if ((wantFree != freeActive() || (!wantFree && HomeMode.soft(c))) && !busy()) {   // soft Home counts as not-yet-full: choosing Borealis tries ADB again
                     HomeMode.request(c, wantFree ? HomeMode.FREE : HomeMode.ORIGINAL);
                     pendingAt = SystemClock.uptimeMillis();
                 }

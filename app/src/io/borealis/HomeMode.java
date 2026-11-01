@@ -265,16 +265,9 @@ final class HomeMode {
             // back. The TV's first setup usually saved the network: then stop here, before anything changes.
             Set<String> owners = wifiOwners(adb);
             boolean setupHome = setupIsHome(adb);
-            if ((setupHome && owners.contains(GOOGLE_SETUP)) || owners.contains(packageOf(home))) {
-                // Turning the TV's own home off would erase the saved Wi-Fi: nothing is turned off. The soft Home
-                // (the accessibility service takes the Home button) needs no ADB change at all.
-                setSoft(c, true);
-                softAccess(c, adb);   // ADB is here: allow the restricted setting and turn the service on ourselves
-                done(c, Ui.tr("a configuração inicial da TV salvou o seu Wi-Fi e desligá-la apagaria essa rede. Para não perdê-la, usamos o modo sem ADB: aperte Início para testar. Se não abrir o Borealis, ative-o em Configurações → Acessibilidade.",
-                        "the TV's first setup saved your Wi-Fi and turning it off would erase that network. To keep it, we use the no-ADB mode: press Home to try it. If Borealis doesn't open, turn it on in Settings → Accessibility.",
-                        "la configuración inicial del TV guardó tu Wi-Fi y apagarla borraría esa red. Para no perderla usamos el modo sin ADB: presiona Inicio para probar. Si no abre Borealis, actívalo en Ajustes → Accesibilidad."));
-                return;
-            }
+            // Those apps stay on (the loop below skips them): Borealis still becomes the home screen, and the TV's own
+            // stays installed. If Android does not hand the home role to Borealis that way, the soft Home takes over.
+            final boolean keepsWifi = (setupHome && owners.contains(GOOGLE_SETUP)) || owners.contains(packageOf(home));
             if (metrics(latest, ORIGINAL) == null && !home.isEmpty()) {
                 busy(c, Ui.tr("Medindo o Início original…", "Measuring the original home screen…"));
                 measureHomeTime(c, adb, ORIGINAL);
@@ -284,6 +277,14 @@ final class HomeMode {
             check(adb.shell("cmd package set-home-activity " + HOME_ACTIVITY), "Success",
                     Ui.tr("o Android não aceitou o novo Início", "Android didn't accept the new home screen"));
             adb.shell("settings put secure screensaver_components " + DREAM);
+            if (keepsWifi && !homeHolder(adb).contains(PKG)) {
+                setSoft(c, true);
+                softAccess(c, adb);   // ADB is here: allow the restricted setting and turn the service on ourselves
+                done(c, Ui.tr("a configuração inicial da TV salvou o seu Wi-Fi e desligá-la apagaria essa rede. Para não perdê-la, usamos o modo sem ADB: aperte Início para testar. Se não abrir o Borealis, ative-o em Configurações → Acessibilidade.",
+                        "the TV's first setup saved your Wi-Fi and turning it off would erase that network. To keep it, we use the no-ADB mode: press Home to try it. If Borealis doesn't open, turn it on in Settings → Accessibility.",
+                        "la configuración inicial del TV guardó tu Wi-Fi y apagarla borraría esa red. Para no perderla usamos el modo sin ADB: presiona Inicio para probar. Si no abre Borealis, actívalo en Ajustes → Accesibilidad."));
+                return;
+            }
             List<String> targets = targets(home, dream, setupHome);
             Set<String> disabled = new HashSet<>(stringList(state(c), "disabled"));
             Set<String> present = packages(adb, "");
@@ -309,7 +310,9 @@ final class HomeMode {
                 }
             }
             notice(c, Ui.tr("Borealis ligado: Início e tela de descanso novos, " + disabled.size() + " apps desligados.",
-                    "Borealis is on: new home screen and screensaver, " + disabled.size() + " apps turned off."));
+                    "Borealis is on: new home screen and screensaver, " + disabled.size() + " apps turned off.")
+                    + (keepsWifi ? Ui.tr(" O Início original ficou ligado para proteger o seu Wi-Fi.", " The original home screen was left on to protect your Wi-Fi.",
+                    " El Inicio original quedó encendido para proteger tu Wi-Fi.") : ""));
             busy(c, Ui.tr("Medindo o Borealis…", "Measuring Borealis…"));
             measureHomeTime(c, adb, FREE);
             done(c, null);
