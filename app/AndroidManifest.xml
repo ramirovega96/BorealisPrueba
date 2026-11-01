@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.borealis"
-    android:versionCode="3446"
-    android:versionName="3.44.6">
+    android:versionCode="3450"
+    android:versionName="3.45.0">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Lets Borealis hand its own updates to Android's installer (the person confirms each one). -->
