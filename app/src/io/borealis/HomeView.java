@@ -645,7 +645,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
-        measure(heroLayer, width, Math.round(815 * kk));
+        measure(heroLayer, width, Math.round(1060 * kk));   // tall enough for the row of cards and their titles (down to ~1000)
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
         // cheaper for the GPU to composite on every frame of the drawer animation.
@@ -3549,8 +3549,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int top = -1;
         int shownCards = recentCards() ? Math.min(MAX_CARDS, cards.size()) : Math.max(3, Math.min(MAX_CARDS, cards.size()));
         for (int i = 0; i < shownCards; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
+        // The row is cut at the content margins (a little slack for the focus ring and shadow): no card is left half-visible at the screen's edge.
+        c.save();
+        c.clipRect((MARGIN - 26) * k, 0, (CONTENT_R + 26) * k, h);
         for (int i = 0; i < shownCards; i++) if (i != top) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
+        c.restore();
         if (cards.isEmpty() && recentCards()) drawNothingToContinue(c);
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
